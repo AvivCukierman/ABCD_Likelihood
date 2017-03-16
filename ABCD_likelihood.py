@@ -1,5 +1,5 @@
 from numpy import random,log,arange,argsort,exp,array,insert,sqrt,std,load
-from helper_functions import sample_mode
+#from helper_functions import sample_mode
 from pickle import dump as save
 import numpy
 from iminuit import Minuit
