@@ -337,8 +337,7 @@ amasscuts = range(3,12,1)
 VBFmasscuts = range(200,1001,100)
 #VBFmasscuts = [400,800] 
 data_nums = load('ABCD_nums_VBF2_data16_periodAL_3.9.17.p')
-checkValRatio(amasscuts,VBFmasscuts)
-st()
+#checkValRatio(amasscuts,VBFmasscuts)
 #VBF_sig_nums = load('ABCD_nums_VBF2_VBF_a30_ggyy.p')
 #ggH_sig_nums = load('ABCD_nums_VBF2_ggH_a30_ggyy.p')
 VBF_sig_nums = load('ABCD_nums_VBF2_VBF_a30_ggyy_3.9.17.p')
@@ -356,7 +355,7 @@ doMCUncertainty = False
 doLikelihoodDist = False 
 
 recalc = True 
-rewrite = False
+rewrite = True
 if not recalc:
   closures = load(submitDir+'/closures_ABCD.p')
   twosigmas = load(submitDir+'/twosigmas_ABCD.p')
