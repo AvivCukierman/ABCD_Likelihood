@@ -28,7 +28,8 @@ def asimov(NinA,NinB,NinC,a,b,c,mu,closure=1):
   NinD = bkg_D+mu
   return NinD
 
-#print mu_t,muS_t,tauB_t,tauC_t
+def quadraturesum(x,y):
+  return sqrt(pow(x,2)+pow(y,2))
 
 def logL(mu,muS,tauB,tauC,DA,DB,DC,DD,aa,bb,cc):
   #if mu<0 or muS<0 or tauB<0 or tauC<0: return 1000000000000
@@ -119,7 +120,7 @@ def MLE(NinA_given,NinB_given,NinC_given,NinD_given,a,b,c,pseudodata=1,doExact=F
     mus.append(final_mu)
     lower_errs.append(final_lower_err)
     upper_errs.append(final_upper_err)
-  if not doExact: return mus,lower_errs[0],upper_errs[0],2*upper_errs[0]
+  if not doExact: return array(mus),array(lower_errs),array(upper_errs),2*array(upper_errs)
   else: 
     #MLE_mu = sample_mode(mus,above=0.5*mus[0])
     mus_sorted = argsort(mus)
@@ -128,10 +129,203 @@ def MLE(NinA_given,NinB_given,NinC_given,NinD_given,a,b,c,pseudodata=1,doExact=F
     MLE_2upper_err = mus[mus_sorted[int(len(mus)*0.95)]]-mus[0] #95th percentile
     return mus,MLE_lower_err,MLE_upper_err,MLE_2upper_err
 
-def doMLE(doLinearity,doClosureSyst,doMCUncertainty,doLikelihoodDist):
+def cl95values(mu_ts,mus,us,ls,sumls,sumus,acut=7,vcut=800):
+  if doSysts:
+    plt.errorbar(mu_ts,mus,color='black',ls='-',label='MLE Estimate')
+    plt.fill_between(mu_ts,mus-ls,mus+us,edgecolor='white',facecolor='#FFFF00',label='$\pm$1-Sigma')
+    plt.errorbar(mu_ts,mus+2*us,color='r',ls='-',label='95\% CL (systematics not included)')
+    #plt.errorbar(mu_ts,mu_ts,color='black',ls=':',label='Linearity')
+    plt.errorbar(mu_ts,mus+sumus,color='black',ls='--',label='$\pm 1 \sigma$ Systematics')
+    plt.errorbar(mu_ts,mus-sumls,color='black',ls='--')
+    plt.errorbar(mu_ts,mus+2*quadraturesum(us,sumus),color='r',ls='--',label='95\% CL (systematics included)')
+    #plt.errorbar(mu_ts,mus-5*ls,color='g',ls='--',label='5-Sigma Discovery!')
+    plt.xlabel('True BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+    plt.ylabel('BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+    plt.xlim(0,0.25)
+    plt.ylim(0,0.25)
+    #plt.ylim(min(mu_ts),)
+    plt.legend(loc='upper left')
+    plt.savefig(submitDir+'/ABCD_linearity_'+'allSysts'+'_'+str(acut)+'_'+str(vcut)+'.png')
+    plt.close()
+
+  result = []
+  sumus = quadraturesum(us,sumus)
+  sumls = quadraturesum(ls,sumls)
+  sigma0 = sumus[0]
+  for N,Nsigmax in zip([0,1,2,-1,-2],[1.96,1.73,1.66,2.41,3.05]):
+    #while lowerx-(N*sigma0+Nsigmax*lowersigmax)>0:
+    lowerCL = mus-N*sigma0-Nsigmax*sumls
+    cl95ind = (i for i,x in enumerate(lowerCL) if x > 0.0001).next() 
+    x1 = mu_ts[cl95ind-1]
+    y1 = lowerCL[cl95ind-1]
+    x2 = mu_ts[cl95ind]
+    y2 = lowerCL[cl95ind]
+    cl95 = x1-y1*(x2-x1)/(y2-y1)
+    result.append(cl95)
+  print result
+  return result
+
+def linearityFit(NinA_data,NinB_data,NinC_data,a,b,c,mu_t_norm,closure=1,aActual=None,bActual=None,cActual=None,mu_t_normActual=None,pseudodata=1):
+  #actual numbers based on systematic:
+  if not aActual: aActual=a
+  if not bActual: bActual=b
+  if not cActual: cActual=c
+  if not mu_t_normActual: mu_t_normActual=mu_t_norm
+
+  mu_ts = arange(0.000,3.01,0.1)
+  mus = []
+  us = []
+  u2s = []
+  ls = []
+  for mu_t_hat in mu_ts:
+    #mu_t_hat = 1 #true ratio of mu to 0.1
+    mu_t = mu_t_hat*mu_t_norm #sig_D = true number of signal in region D
+    mu_tActual = mu_t_hat*mu_t_normActual #sig_D = true number of signal in region D
+    NinD_data = asimov(NinA_data,NinB_data,NinC_data,aActual,bActual,cActual,mu_tActual,closure=closure)
+    mu,l,u,u2 = MLE(NinA_data,NinB_data,NinC_data,NinD_data,a,b,c,doExact=False,pseudodata=pseudodata)
+    #print mu_t_hat,mu[0],NinD_data,mu_t/sqrt(mu_t+NinD_data),mu[0]/l
+    #if mu_t_hat<0.1 and closure_syst==0: print acut,vcut,2*u/mu_t_norm,closure,closure_err
+    mus.append(mu[0]/mu_t_norm) #should be same as mu_t_hat
+    us.append(u[0]/mu_t_norm)
+    u2s.append(u2[0]/mu_t_norm)
+    ls.append(l[0]/mu_t_norm)
+  mu_ts = mu_ts*0.1
+  mus = array(mus)*0.1
+  us = array(us)*0.1
+  ls = array(ls)*0.1
+  return mu_ts,mus,us,ls
+
+def getMusAndSigmas(NinA_data,NinB_data,NinC_data,vcut=800,acut=7,doSysts=True,reCalc=True,closure_err=0):
+  if not reCalc:
+    print '<<Trying to load Mus and Sigmas>>'
+    outFileName = submitDir+'/musAndSigmas_a'+str(acut)+'_v'+str(vcut)
+    if doSysts: outFileName+='_systs'
+    outFileName+='.npy'
+    try:
+      npzfile = numpy.load(outFileName)
+      return npzfile['mu_ts'],npzfile['mus'][()],npzfile['us'][()],npzfile['ls'][()]
+    except IOError:
+      print '<<Couldn\'t load Mus and Sigmas, recalculating>>'
+      reCalc=True
+  if reCalc:
+    mus_systs = {s["name"]:[] for s in systs}
+    mu_ts_systs = {s["name"]:[] for s in systs}
+    us_systs = {s["name"]:[] for s in systs}
+    ls_systs = {s["name"]:[] for s in systs}
+
+    a_systs = {s["name"]:[] for s in systs}
+    b_systs = {s["name"]:[] for s in systs}
+    c_systs = {s["name"]:[] for s in systs}
+    mu_t_norm_systs = {s["name"]:[] for s in systs}
+
+    NinA_MC = VBF_sig_nums["Nominal"][acut,vcut]['sig']['A']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['A']['num']*norm2
+    NinB_MC = VBF_sig_nums["Nominal"][acut,vcut]['sig']['B']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['B']['num']*norm2
+    NinC_MC = VBF_sig_nums["Nominal"][acut,vcut]['sig']['C']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['C']['num']*norm2
+    NinD_MC = VBF_sig_nums["Nominal"][acut,vcut]['sig']['D']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['D']['num']*norm2
+    a = NinA_MC/NinD_MC #MC sig_A/sig_D
+    b = NinB_MC/NinD_MC #MC sig_B/sig_D
+    c = NinC_MC/NinD_MC #MC sig_C/sig_D
+    mu_t_norm = NinD_MC*lmult #MC expected signal BR = 0.1
+    a_systs["Nominal"] = a
+    b_systs["Nominal"] = b
+    c_systs["Nominal"] = c
+    mu_t_norm_systs["Nominal"] = mu_t_norm
+
+    mu_ts,mus,us,ls = linearityFit(NinA_data,NinB_data,NinC_data,a,b,c,mu_t_norm,closure=1,aActual=a,bActual=b,cActual=c,mu_t_normActual=mu_t_norm,pseudodata=1)
+    mu_ts_systs["Nominal"] = mu_ts
+    mus_systs["Nominal"] = mus
+    us_systs["Nominal"] = us
+    ls_systs["Nominal"] = ls
+
+    if doSysts:
+      for s in systs:
+        systName = s["name"]
+        for v in s["vars"]:
+          if systName=='Nominal': continue
+          if systName=='Closure': thisVar = "Nominal" 
+          else: thisVar = systName+'_'+v
+
+          NinA_MC = VBF_sig_nums[thisVar][acut,vcut]['sig']['A']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['A']['num']*norm2
+          NinB_MC = VBF_sig_nums[thisVar][acut,vcut]['sig']['B']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['B']['num']*norm2
+          NinC_MC = VBF_sig_nums[thisVar][acut,vcut]['sig']['C']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['C']['num']*norm2
+          NinD_MC = VBF_sig_nums[thisVar][acut,vcut]['sig']['D']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['D']['num']*norm2
+          a = NinA_MC/NinD_MC #MC sig_A/sig_D
+          b = NinB_MC/NinD_MC #MC sig_B/sig_D
+          c = NinC_MC/NinD_MC #MC sig_C/sig_D
+          #b = float(NinA_data)/NinC_data
+          #c = float(NinA_data)/NinB_data
+          #a = b*c 
+          mu_t_norm = NinD_MC*lmult #MC expected signal BR = 0.1
+          a_systs[systName].append(a)
+          b_systs[systName].append(b)
+          c_systs[systName].append(c)
+          mu_t_norm_systs[systName].append(mu_t_norm)
+
+      for s in systs:
+        systName = s["name"]
+        if systName=='Nominal': continue
+        symmetric = (len(s["vars"])==1)
+        for iVar in range(len(a_systs[systName])):
+          a = a_systs["Nominal"]
+          b = b_systs["Nominal"]
+          c = c_systs["Nominal"]
+          mu_t_norm = mu_t_norm_systs["Nominal"]
+          aActual = a_systs[systName][iVar]
+          bActual = b_systs[systName][iVar]
+          cActual = c_systs[systName][iVar]
+          mu_t_normActual = mu_t_norm_systs[systName][iVar]
+          #print systName,iVar
+          #print a,b,c,mu_t_norm
+          #print aActual,bActual,cActual,mu_t_normActual
+
+          if systName=='Closure' and iVar==0: closure=1-closure_err
+          elif systName=='Closure' and iVar==1: closure=1+closure_err
+          else: closure=1
+          mu_ts,mus,us,ls = linearityFit(NinA_data,NinB_data,NinC_data,a,b,c,mu_t_norm,closure=closure,aActual=aActual,bActual=bActual,cActual=cActual,mu_t_normActual=mu_t_normActual,pseudodata=1)
+          mus_systs[systName].append(mus)
+          mu_ts_systs[systName].append(mu_ts)
+          us_systs[systName].append(us)
+          ls_systs[systName].append(ls)
+          if symmetric:
+            mus_systs[systName].append(2*mus_systs["Nominal"]-mus) #assume symmetric
+
+    for s in systs:
+      systName = s["name"]
+      if not doSysts and not systName=="Nominal": continue
+      mu_ts = mu_ts_systs["Nominal"]
+      mus = mus_systs["Nominal"]
+      us = us_systs["Nominal"]
+      ls = ls_systs["Nominal"]
+
+      plt.errorbar(mu_ts,mus,color='black',ls='-',label='MLE Estimate')
+      plt.fill_between(mu_ts,mus-ls,mus+us,edgecolor='white',facecolor='#FFFF00',label='$\pm$1-Sigma')
+      #plt.errorbar(mu_ts,mu_ts,color='black',ls=':',label='Linearity')
+      plt.errorbar(mu_ts,mus+2*us,color='r',ls='--',label='95\% Confidence Limit')
+      plt.errorbar(mu_ts,mus-5*ls,color='g',ls='--',label='5-Sigma Discovery!')
+      if not systName=='Nominal':
+        plt.errorbar(mu_ts,mus_systs[systName][0],color='black',ls='--',label='$\pm 1 \sigma$ Systematic')
+        plt.errorbar(mu_ts,mus_systs[systName][1],color='black',ls='--')
+      plt.xlabel('True BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+      plt.ylabel('BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+      plt.xlim(0,0.25)
+      plt.ylim(0,0.25)
+      #plt.ylim(min(mu_ts),)
+      plt.legend(loc='upper left')
+      if not systName=='Nominal': plt.savefig(submitDir+'/ABCD_linearity_'+systName+'_'+str(acut)+'_'+str(vcut)+'.png')
+      else: plt.savefig(submitDir+'/ABCD_linearity_'+str(acut)+'_'+str(vcut)+'.png')
+      plt.close()
+
+    outFileName = submitDir+'/musAndSigmas_a'+str(acut)+'_v'+str(vcut)
+    if doSysts: outFileName+='_systs'
+    outFileName+='.npy'
+    with open(outFileName,'wb') as outFile:
+      numpy.savez(outFile,mu_ts=mu_ts,mus=mus_systs,us=us_systs,ls=ls_systs)
+    return mu_ts,mus_systs,us_systs,ls_systs
+
+def doMLE(doSysts,doMCUncertainty,doLikelihoodDist):
   closures = {(a,v): [None,None] for a in amasscuts for v in VBFmasscuts}
-  twosigmas = {(a,v): None for a in amasscuts for v in VBFmasscuts}
-  fivesigmas = {(a,v): None for a in amasscuts for v in VBFmasscuts}
+  twosigmas = {(a,v): [] for a in amasscuts for v in VBFmasscuts}
+  #fivesigmas = {(a,v): None for a in amasscuts for v in VBFmasscuts}
   for vcut in VBFmasscuts:
     for acut in amasscuts:
       print vcut,acut
@@ -144,76 +338,25 @@ def doMLE(doLinearity,doClosureSyst,doMCUncertainty,doLikelihoodDist):
       closures[acut,vcut] = [closure,closure_err]
       if NinA_data==0 or NinB_data==0 or NinC_data==0: continue
 
-      NinA_MC = VBF_sig_nums[acut,vcut]['sig']['A']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['A']['num']*norm2
-      NinB_MC = VBF_sig_nums[acut,vcut]['sig']['B']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['B']['num']*norm2
-      NinC_MC = VBF_sig_nums[acut,vcut]['sig']['C']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['C']['num']*norm2
-      NinD_MC = VBF_sig_nums[acut,vcut]['sig']['D']['num']*norm1+ggH_sig_nums[acut,vcut]['sig']['D']['num']*norm2
-      a = NinA_MC/NinD_MC #MC sig_A/sig_D
-      b = NinB_MC/NinD_MC #MC sig_B/sig_D
-      c = NinC_MC/NinD_MC #MC sig_C/sig_D
-      #b = float(NinA_data)/NinC_data
-      #c = float(NinA_data)/NinB_data
-      #a = b*c 
-      mu_t_norm = NinD_MC*lmult #MC expected signal BR = 0.1
+      #mu_t = 0 #no signal->expected 95% confidence limit
+      #NinD_data = asimov(NinA_data,NinB_data,NinC_data,a,b,c,mu_t,closure=1)
+      #cl95 = cl95Values(NinA_data,NinB_data,NinC_data,NinD_data,a,b,c,mu_t_norm)
+      #twosigmas[acut,vcut] = [c*0.1 for c in cl95]
 
-      if doLinearity:
-        for closure_syst in [0,1,-1]:
-          if not doClosureSyst and not closure_syst==0: continue
-          mu_ts = arange(0.000,3.01,0.1)
-          mus = []
-          us = []
-          u2s = []
-          ls = []
-          for mu_t_hat in mu_ts:
-            #mu_t_hat = 1 #true ratio of mu to 0.1
-            mu_t = mu_t_hat*mu_t_norm #sig_D = true number of signal in region D
-            if doClosureSyst: NinD_data = asimov(NinA_data,NinB_data,NinC_data,a,b,c,mu_t,closure=closure+closure_syst*closure_err)
-            else: NinD_data = asimov(NinA_data,NinB_data,NinC_data,a,b,c,mu_t,closure=1)
-            mu,l,u,u2 = MLE(NinA_data,NinB_data,NinC_data,NinD_data,a,b,c,doExact=False)
-            #if mu[0]-1.1*l<0: mu,l,u,u2 = MLE(NinA_data,NinB_data,NinC_data,NinD_data,a,b,c,doExact=True)
-            #print mu_t_hat,mu[0],NinD_data,mu_t/sqrt(mu_t+NinD_data),mu[0]/l
-            '''while u/mu_t_norm>1:
-              mu_t = mu_t+0.001*mu_t_norm
-              NinD_data = asimov(NinA_data,NinB_data,NinC_data,a,b,c,mu_t,closure=closure+closure_syst*closure_err)
-              mu,l,u = MLE(NinA_data,NinB_data,NinC_data,NinD_data,a,b,c)'''
-            if mu_t_hat<0.1 and closure_syst==0: print acut,vcut,2*u/mu_t_norm,closure,closure_err
-            mus.append(mu[0]/mu_t_norm) #should be same as mu_t_hat
-            us.append(u/mu_t_norm)
-            u2s.append(u2/mu_t_norm)
-            ls.append(l/mu_t_norm)
-          mu_ts = mu_ts*0.1
-          mus = array(mus)*0.1
-          us = array(us)*0.1
-          u2s = array(u2s)*0.1
-          ls = array(ls)*0.1
-          #plt.errorbar(mu_ts,mus,yerr=[ls,us],color='black',marker='o',markersize=5,ls=' ',label='MLE Estimate')
-          if closure_syst==0:
-            plt.errorbar(mu_ts,mus,color='black',ls='-',label='MLE Estimate')
-            plt.fill_between(mu_ts,mus-ls,mus+us,edgecolor='white',facecolor='#FFFF00',label='$\pm$1-Sigma')
-            #plt.errorbar(mu_ts,mu_ts,color='black',ls=':',label='Linearity')
-            plt.errorbar(mu_ts,mus+u2s,color='r',ls='--',label='95\% Confidence Limit')
-            plt.errorbar(mu_ts,mus-5*ls,color='g',ls='--',label='5-Sigma Discovery!')
-          elif closure_syst==1: plt.errorbar(mu_ts,mus,color='black',ls='--',label='$\pm 1 \sigma$ Closure')
-          elif closure_syst==-1: plt.errorbar(mu_ts,mus,color='black',ls='--')
-          if closure_syst==0:
-            twosigma = (mus+2*us)[0]
-            twosigmas[acut,vcut] = twosigma
-            fivesigmaind = (i for i,x in enumerate(mus-5*ls) if x > 0.001).next() 
-            x1 = mu_ts[fivesigmaind-1]
-            y1 = (mus-5*ls)[fivesigmaind-1]
-            x2 = mu_ts[fivesigmaind]
-            y2 = (mus-5*ls)[fivesigmaind]
-            fivesigma = x1-y1*(x2-x1)/(y2-y1)
-            fivesigmas[acut,vcut] = fivesigma
-        plt.xlabel('True BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
-        plt.ylabel('BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
-        plt.xlim(0,0.25)
-        plt.ylim(0,0.25)
-        #plt.ylim(min(mu_ts),)
-        plt.legend(loc='upper left')
-        if doClosureSyst: plt.savefig(submitDir+'/ABCD_linearity_closureSyst_'+str(acut)+'_'+str(vcut)+'.png')
-        else: plt.savefig(submitDir+'/ABCD_linearity_'+str(acut)+'_'+str(vcut)+'.png')
-        plt.close()
+      #
+      #syts
+      #
+      mu_ts,mus,ls,us = getMusAndSigmas(NinA_data,NinB_data,NinC_data,vcut=vcut,acut=acut,doSysts=doSysts,reCalc=False,closure_err=closure_err)
+      sumls = ls['Nominal']*0
+      sumus = us['Nominal']*0
+      if doSysts:
+        for s in systs:
+          systName = s['name']
+          if systName=='Nominal': continue
+          sumls = quadraturesum(sumls,mus["Nominal"]-mus[systName][0])
+          sumus = quadraturesum(sumus,-mus["Nominal"]+mus[systName][1])
+      cl95s = cl95values(mu_ts,mus['Nominal'],us['Nominal'],ls['Nominal'],sumls,sumus,acut=acut,vcut=vcut)
+      twosigmas[acut,vcut] = cl95s
 
       if not (doMCUncertainty or doLikelihoodDist): continue
       for mu_t_hat in [0,0.5,1.0]:
@@ -239,8 +382,8 @@ def doMLE(doLinearity,doClosureSyst,doMCUncertainty,doLikelihoodDist):
         if doLikelihoodDist: mus,lower_err,upper_err = MLE(NinA_data,NinB_data,NinC_data,NinD_data,a,b,c,pseudodata=10000)
         mus = array(mus)/mu_t_norm
         mus = mus*0.1
-        lower_err = lower_err/mu_t_norm*0.1
-        upper_err = upper_err/mu_t_norm*0.1
+        lower_err = lower_err[0]/mu_t_norm*0.1
+        upper_err = upper_err[0]/mu_t_norm*0.1
         binwidth = 0.5*std(mus)
         n,bins = numpy.histogram(mus,normed=True,bins=numpy.arange(0, max(mus)+binwidth, binwidth))
         n = insert(n,0,0)
@@ -265,7 +408,7 @@ def doMLE(doLinearity,doClosureSyst,doMCUncertainty,doLikelihoodDist):
         else:
           plt.savefig(submitDir+'/test_ABCD_likelihood_mu'+str(int(mu_t_hat*10))+'_'+str(acut)+'_'+str(vcut)+'.png')
         plt.close()
-  return closures,twosigmas,fivesigmas
+  return closures,twosigmas
 
 def calcValRatio(acut,vcut):
   NinA_data_sig = data_nums[acut,vcut]['sig']['num']['A']*lmult #actual data
@@ -333,15 +476,16 @@ def checkValRatio(amasscuts,VBFmasscuts):
 submitDir = 'AL_output'
 #L2016 = 32.8616 ifb
 lmult = 1 #luminosity_multiplier
-amasscuts = range(3,12,1)
+amasscuts = range(7,9,1)
 VBFmasscuts = range(200,1001,100)
-#VBFmasscuts = [400,800] 
+#amasscuts = range(3,12,1)
+#VBFmasscuts = [800] 
 data_nums = load('ABCD_nums_VBF2_data16_periodAL_3.9.17.p')
 #checkValRatio(amasscuts,VBFmasscuts)
-#VBF_sig_nums = load('ABCD_nums_VBF2_VBF_a30_ggyy.p')
-#ggH_sig_nums = load('ABCD_nums_VBF2_ggH_a30_ggyy.p')
-VBF_sig_nums = load('ABCD_nums_VBF2_VBF_a30_ggyy_3.9.17.p')
-ggH_sig_nums = load('ABCD_nums_VBF2_ggH_a30_ggyy_3.9.17.p')
+VBF_sig_nums = load('ABCD_nums_VBF2_VBF_a30_ggyy_3.10.17.p')
+ggH_sig_nums = load('ABCD_nums_VBF2_ggH_a30_ggyy_3.10.17.p')
+
+systs = json.load(open('jet_systs.json','rb'))
 
 MC_params = json.load(open('MC_ABCD.json','rb'))
 MC1 = MC_params['VBF_a30_ggyy']
@@ -349,84 +493,115 @@ MC2 = MC_params['ggH_a30_ggyy']
 norm1 = MC1['norm']
 norm2 = MC2['norm']
 
-doLinearity = True 
-doClosureSyst = False
+doSysts = True
+doOpt = False
 doMCUncertainty = False
 doLikelihoodDist = False 
 
-recalc = True 
+recalc = True
 rewrite = True
 if not recalc:
   closures = load(submitDir+'/closures_ABCD.p')
-  twosigmas = load(submitDir+'/twosigmas_ABCD.p')
-  fivesigmas = load(submitDir+'/fivesigmas_ABCD.p')
+  twosigmas = load(submitDir+'/twosigmas_brazil_ABCD.p')
+  if not doSysts: twosigmas = load(submitDir+'/twosigmas_brazil_ABCD.p')
+  else: twosigmas = load(submitDir+'/twosigmas_brazil_systs_ABCD.p')
 else:
-  closures,twosigmas,fivesigmas = doMLE(doLinearity,doClosureSyst,doMCUncertainty,doLikelihoodDist)
+  closures,twosigmas = doMLE(doSysts,doMCUncertainty,doLikelihoodDist)
   if rewrite:
-    save(closures,open(submitDir+'/closures_ABCD.p','wb'))
-    save(twosigmas,open(submitDir+'/twosigmas_ABCD.p','wb'))
-    save(fivesigmas,open(submitDir+'/fivesigmas_ABCD.p','wb'))
+    if not doSysts: save(twosigmas,open(submitDir+'/twosigmas_brazil_ABCD.p','wb'))
+    else: save(twosigmas,open(submitDir+'/twosigmas_brazil_systs_ABCD.p','wb'))
+    #save(closures,open(submitDir+'/closures_ABCD.p','wb'))
+    #save(twosigmas,open(submitDir+'/twosigmas_ABCD.p','wb'))
+    #save(fivesigmas,open(submitDir+'/fivesigmas_ABCD.p','wb'))
 
-for v in VBFmasscuts:
-  plt.errorbar(amasscuts,[closures[a,v][0] for a in amasscuts],yerr=[closures[a,v][1] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV')
-  plt.plot([0,100],[1,1],color='black',ls='--')
-  plt.xlim(0,max(amasscuts)+min(amasscuts))
-  plt.legend(loc='upper right')
-  plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
-  plt.ylabel('Closure in Validation Region')
-  plt.savefig(submitDir+'/ABCD_closure_v'+str(v)+'.png')
-  plt.close()
+doBrazil = True
+if doBrazil:
+  for v in VBFmasscuts:
+    plt.errorbar(amasscuts,[twosigmas[a,v][0] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV',color='black',ls='--')
+    plt.fill_between(amasscuts,[twosigmas[a,v][4] for a in amasscuts],[twosigmas[a,v][2] for a in amasscuts],edgecolor='#FFFF00',facecolor='#FFFF00',label='$\pm$2-Sigma')
+    plt.fill_between(amasscuts,[twosigmas[a,v][3] for a in amasscuts],[twosigmas[a,v][1] for a in amasscuts],edgecolor='#00FF00',facecolor='#00FF00',label='$\pm$1-Sigma')
+    plt.xlim(0,max(amasscuts)+min(amasscuts))
+    plt.ylim(0,0.12)
+    plt.legend(loc='upper right')
+    plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
+    plt.ylabel('95\% Confidence Limit on BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+    if not doSysts: plt.savefig(submitDir+'/ABCD_twosigma_brazil_v'+str(v)+'.png')
+    else: plt.savefig(submitDir+'/ABCD_twosigma_brazil_systs_v'+str(v)+'.png')
+    plt.close()
 
-for v in VBFmasscuts:
-  plt.errorbar(amasscuts,[twosigmas[a,v] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV')
-  plt.xlim(0,max(amasscuts)+min(amasscuts))
-  plt.legend(loc='upper right')
-  plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
-  plt.ylabel('95\% Confidence Limit on BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
-  plt.savefig(submitDir+'/ABCD_twosigma_v'+str(v)+'.png')
-  plt.close()
+  for a in amasscuts:
+    plt.errorbar(VBFmasscuts,[twosigmas[a,v][0] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV',color='black',ls='--')
+    plt.fill_between(VBFmasscuts,[twosigmas[a,v][4] for v in VBFmasscuts],[twosigmas[a,v][2] for v in VBFmasscuts],edgecolor='#FFFF00',facecolor='#FFFF00',label='$\pm$2-Sigma')
+    plt.fill_between(VBFmasscuts,[twosigmas[a,v][3] for v in VBFmasscuts],[twosigmas[a,v][1] for v in VBFmasscuts],edgecolor='#00FF00',facecolor='#00FF00',label='$\pm$1-Sigma')
+    plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
+    plt.ylim(0,0.12)
+    plt.legend(loc='upper right')
+    plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
+    plt.ylabel('95\% Confidence Limit on BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+    if not doSysts: plt.savefig(submitDir+'/ABCD_twosigma_brazil_a'+str(a)+'.png')
+    else: plt.savefig(submitDir+'/ABCD_twosigma_brazil_systs_a'+str(a)+'.png')
+    plt.close()
 
-for v in VBFmasscuts:
-  plt.errorbar(amasscuts,[fivesigmas[a,v] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV')
-  plt.xlim(0,max(amasscuts)+min(amasscuts))
-  plt.legend(loc='upper right')
-  plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
-  plt.ylabel('Minimum BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$ for 5-$\sigma$ Discovery')
-  plt.savefig(submitDir+'/ABCD_fivesigma_v'+str(v)+'.png')
-  plt.close()
+if doOpt:
+    for v in VBFmasscuts:
+      plt.errorbar(amasscuts,[closures[a,v][0] for a in amasscuts],yerr=[closures[a,v][1] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV')
+      plt.plot([0,100],[1,1],color='black',ls='--')
+      plt.xlim(0,max(amasscuts)+min(amasscuts))
+      plt.legend(loc='upper right')
+      plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
+      plt.ylabel('Closure in Validation Region')
+      plt.savefig(submitDir+'/ABCD_closure_v'+str(v)+'.png')
+      plt.close()
 
-for a in amasscuts:
-  plt.errorbar(VBFmasscuts,[closures[a,v][0] for v in VBFmasscuts],yerr=[closures[a,v][1] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV')
-  plt.plot([0,1000],[1,1],color='black',ls='--')
-  plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
-  plt.legend(loc='upper right')
-  plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut')
-  plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
-  plt.ylabel('Closure in Validation Region')
-  plt.savefig(submitDir+'/ABCD_closure_a'+str(a)+'.png')
-  plt.close()
+    for v in VBFmasscuts:
+      plt.errorbar(amasscuts,[twosigmas[a,v] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV')
+      plt.xlim(0,max(amasscuts)+min(amasscuts))
+      plt.legend(loc='upper right')
+      plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
+      plt.ylabel('95\% Confidence Limit on BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+      plt.savefig(submitDir+'/ABCD_twosigma_v'+str(v)+'.png')
+      plt.close()
 
-for a in amasscuts:
-  plt.errorbar(VBFmasscuts,[twosigmas[a,v] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV')
-  plt.plot([0,100],[1,1],color='black',ls='--')
-  plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
-  plt.ylim(0,0.1)
-  plt.legend(loc='upper right')
-  plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut')
-  plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
-  plt.ylabel('95\% Confidence Limit on BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
-  plt.savefig(submitDir+'/ABCD_twosigma_a'+str(a)+'.png')
-  plt.close()
+    for v in VBFmasscuts:
+      plt.errorbar(amasscuts,[fivesigmas[a,v] for a in amasscuts],label='VBF $M_{jj}$ cut = '+str(v)+' GeV')
+      plt.xlim(0,max(amasscuts)+min(amasscuts))
+      plt.legend(loc='upper right')
+      plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut (GeV)')
+      plt.ylabel('Minimum BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$ for 5-$\sigma$ Discovery')
+      plt.savefig(submitDir+'/ABCD_fivesigma_v'+str(v)+'.png')
+      plt.close()
 
-for a in amasscuts:
-  plt.errorbar(VBFmasscuts,[fivesigmas[a,v] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV')
-  plt.plot([0,100],[1,1],color='black',ls='--')
-  plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
-  plt.ylim(0,0.2)
-  plt.legend(loc='upper right')
-  plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut')
-  plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
-  plt.ylabel('Minimum BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$ for 5-$\sigma$ Discovery')
-  plt.savefig(submitDir+'/ABCD_fivesigma_a'+str(a)+'.png')
-  plt.close()
+    for a in amasscuts:
+      plt.errorbar(VBFmasscuts,[closures[a,v][0] for v in VBFmasscuts],yerr=[closures[a,v][1] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV')
+      plt.plot([0,1000],[1,1],color='black',ls='--')
+      plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
+      plt.legend(loc='upper right')
+      plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut')
+      plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
+      plt.ylabel('Closure in Validation Region')
+      plt.savefig(submitDir+'/ABCD_closure_a'+str(a)+'.png')
+      plt.close()
+
+    for a in amasscuts:
+      plt.errorbar(VBFmasscuts,[twosigmas[a,v] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV')
+      plt.plot([0,100],[1,1],color='black',ls='--')
+      plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
+      plt.ylim(0,0.1)
+      plt.legend(loc='upper right')
+      plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
+      plt.ylabel('95\% Confidence Limit on BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$')
+      plt.savefig(submitDir+'/ABCD_twosigma_a'+str(a)+'.png')
+      plt.close()
+
+    for a in amasscuts:
+      plt.errorbar(VBFmasscuts,[fivesigmas[a,v] for v in VBFmasscuts],label='$|M_{jj}-M_{\gamma\gamma}|$ cut = '+str(a)+' GeV')
+      plt.plot([0,100],[1,1],color='black',ls='--')
+      plt.xlim(0,max(VBFmasscuts)+min(VBFmasscuts))
+      plt.ylim(0,0.2)
+      plt.legend(loc='upper right')
+      plt.xlabel('$|M_{jj}-M_{\gamma\gamma}|$ Cut')
+      plt.xlabel('VBF $M_{jj}$ Cut (GeV)')
+      plt.ylabel('Minimum BR$(H\\rightarrow aa \\rightarrow gg\gamma\gamma)$ for 5-$\sigma$ Discovery')
+      plt.savefig(submitDir+'/ABCD_fivesigma_a'+str(a)+'.png')
+      plt.close()
 
